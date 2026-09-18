@@ -81,14 +81,6 @@ class ScaledDotProductAttention(nn.Module):
                 - Context output tensor of shape (batch_size, n_heads, seq_len_q, d_v).
                 - Normalized attention weights of shape (batch_size, n_heads, seq_len_q, seq_len_k).
         """
-        # TODO: Implement Scaled Dot-Product Attention:
-        # 1. Extract d_k from q.size(-1).
-        # 2. Compute raw attention scores: Q @ K.transpose(-2, -1) / sqrt(d_k).
-        # 3. If mask is provided, apply masked_fill (set positions where mask == 0 to -1e9).
-        # 4. Compute attention probabilities via softmax over the key dimension (dim=-1).
-        # 5. Apply dropout (self.dropout) to attention weights.
-        # 6. Compute output: attention_weights @ V.
-        # 7. Return (output, attention_weights).
         dk=q.size(-1)
         raw_attn_scores=torch.matmul(q,k.transpose(-2,-1))/math.sqrt(dk)
         if mask is not None:
@@ -96,5 +88,116 @@ class ScaledDotProductAttention(nn.Module):
         attn_probability=torch.softmax(raw_attn_scores,dim=-1)
         attn_probability=self.dropout(attn_probability)
         output=torch.matmul(attn_probability, v)
-        return output,attn_probability
+        return output, attn_probability
+
+
+class MultiHeadAttention(nn.Module):
+    r"""
+    Multi-Head Attention (MHA) mechanism.
+
+    Allows the model to jointly attend to information from different representation
+    subspaces at different positions, as formulated in Vaswani et al. (2017):
+
+    .. math::
+        \text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \dots, \text{head}_h) W^O
+
+    where:
+    .. math::
+        \text{head}_i = \text{Attention}\left(Q W_i^Q, K W_i^K, V W_i^V\right)
+
+    Projections:
+        - :math:`W^Q \in \mathbb{R}^{d_{model} \times d_{model}}`
+        - :math:`W^K \in \mathbb{R}^{d_{model} \times d_{model}}`
+        - :math:`W^V \in \mathbb{R}^{d_{model} \times d_{model}}`
+        - :math:`W^O \in \mathbb{R}^{d_{model} \times d_{model}}`
+
+    Instead of computing each head sequentially, all :math:`h` heads are parallelized
+    into a single batched tensor operation by reshaping projections to
+    :math:`(B, h, T, d_k)` and executing batched matrix multiplication.
+
+    Args:
+        d_model (int): Total dimensionality of the model (input and output).
+        n_heads (int): Number of parallel attention heads. Must divide `d_model`.
+        dropout (float, optional): Dropout probability applied to attention weights
+            and output projection. Defaults to 0.1.
+
+    Raises:
+        ValueError: If `d_model` is not divisible by `n_heads`.
+
+    Shape:
+        - **Query (Q)**: :math:`(B, T_q, d_{model})`
+        - **Key (K)**: :math:`(B, T_k, d_{model})`
+        - **Value (V)**: :math:`(B, T_k, d_{model})`
+        - **Mask (optional)**: :math:`(B, 1, 1, T_k)` or :math:`(B, 1, T_q, T_k)`
+        - **Output**: :math:`(B, T_q, d_{model})`
+        - **Attention Weights**: :math:`(B, h, T_q, T_k)`
+
+    Examples:
+        >>> mha = MultiHeadAttention(d_model=512, n_heads=8)
+        >>> x = torch.randn(2, 16, 512)
+        >>> out, weights = mha(x, x, x)
+        >>> out.shape
+        torch.Size([2, 16, 512])
+        >>> weights.shape
+        torch.Size([2, 8, 16, 16])
+    """
+
+    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1) -> None:
+        super().__init__()
+        if d_model % n_heads != 0:
+            raise ValueError(
+                f"d_model ({d_model}) must be divisible by n_heads ({n_heads})."
+            )
+
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_k = d_model // n_heads
+
+        # Linear projections for Query, Key, and Value
+        self.w_q = nn.Linear(d_model, d_model)
+        self.w_k = nn.Linear(d_model, d_model)
+        self.w_v = nn.Linear(d_model, d_model)
+
+        # Scaled Dot-Product Attention core
+        self.attention = ScaledDotProductAttention(dropout=dropout)
+
+        # Final linear projection and dropout
+        self.w_o = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        r"""
+        Perform multi-head attention forward pass.
+
+        Args:
+            q: Query sequence tensor of shape (batch_size, seq_len_q, d_model).
+            k: Key sequence tensor of shape (batch_size, seq_len_k, d_model).
+            v: Value sequence tensor of shape (batch_size, seq_len_k, d_model).
+            mask: Optional attention mask tensor broadcastable to
+                (batch_size, n_heads, seq_len_q, seq_len_k).
+
+        Returns:
+            Tuple of:
+                - Projected multi-head context tensor of shape (batch_size, seq_len_q, d_model).
+                - Attention weights tensor across all heads of shape
+                  (batch_size, n_heads, seq_len_q, seq_len_k).
+        """
+        batch_size,seq_len_q=q.size()[:2]
+        q_proj=self.w_q(q).view(batch_size,-1,self.n_heads,self.d_k).transpose(1,2)
+        k_proj=self.w_k(k).view(batch_size,-1,self.n_heads,self.d_k).transpose(1,2)
+        v_proj=self.w_v(v).view(batch_size,-1,self.n_heads,self.d_k).transpose(1,2)
+        context,attn_weights=self.attention(q_proj,k_proj,v_proj,mask=mask)
+
+        context = context.transpose(1, 2).contiguous().view(batch_size, seq_len_q, self.d_model)
+        output=self.dropout(self.w_o(context))
+        return output, attn_weights
+        
+        
+
 

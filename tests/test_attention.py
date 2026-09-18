@@ -102,3 +102,77 @@ class TestScaledDotProductAttention:
         assert q.grad is not None and torch.isfinite(q.grad).all()
         assert k.grad is not None and torch.isfinite(k.grad).all()
         assert v.grad is not None and torch.isfinite(v.grad).all()
+
+
+class TestMultiHeadAttention:
+    """Test suite for MultiHeadAttention module."""
+
+    @pytest.fixture
+    def mha_module(self):
+        from src.attention import MultiHeadAttention
+        return MultiHeadAttention(d_model=64, n_heads=4, dropout=0.0)
+
+    def test_output_shape(self, mha_module):
+        """Verify output shape matches input (B, T, d_model)."""
+        batch_size, seq_len, d_model = 4, 12, 64
+        x = torch.randn(batch_size, seq_len, d_model)
+
+        output, weights = mha_module(x, x, x)
+
+        assert output.shape == (batch_size, seq_len, d_model), (
+            f"Expected output shape {(batch_size, seq_len, d_model)}, got {output.shape}"
+        )
+        assert weights.shape == (batch_size, 4, seq_len, seq_len), (
+            f"Expected weights shape {(batch_size, 4, seq_len, seq_len)}, got {weights.shape}"
+        )
+
+    def test_invalid_d_model_n_heads_combination(self):
+        """d_model must be divisible by n_heads."""
+        from src.attention import MultiHeadAttention
+        with pytest.raises(ValueError):
+            MultiHeadAttention(d_model=65, n_heads=8)
+
+    def test_padding_mask_broadcast(self, mha_module):
+        """Check that attention mask zeroes out attention weights across all heads."""
+        batch_size, seq_len, d_model = 2, 8, 64
+        x = torch.randn(batch_size, seq_len, d_model)
+
+        # Mask out the last 3 positions: (B, 1, 1, T)
+        mask = torch.ones(batch_size, 1, 1, seq_len, dtype=torch.bool)
+        mask[:, :, :, 5:] = False
+
+        _, weights = mha_module(x, x, x, mask=mask)
+
+        # All heads should have zero attention for the masked positions
+        masked_weights = weights[:, :, :, 5:]
+        assert torch.allclose(masked_weights, torch.zeros_like(masked_weights), atol=1e-6), (
+            "Masked positions across all heads must receive 0.0 attention weight"
+        )
+
+    def test_gradient_flow(self, mha_module):
+        """Verify backpropagation through projections W_q, W_k, W_v, and W_o."""
+        batch_size, seq_len, d_model = 2, 6, 64
+        x = torch.randn(batch_size, seq_len, d_model, requires_grad=True)
+
+        output, _ = mha_module(x, x, x)
+        loss = output.sum()
+        loss.backward()
+
+        assert x.grad is not None and torch.isfinite(x.grad).all()
+        # Verify parameters in all linear projections received gradients
+        for name, param in mha_module.named_parameters():
+            assert param.grad is not None, f"Parameter {name} did not receive gradient"
+            assert torch.isfinite(param.grad).all(), f"Parameter {name} gradient contains NaN/Inf"
+
+    def test_cross_attention_different_lengths(self, mha_module):
+        """Cross-attention: query and key/value can have different sequence lengths."""
+        batch_size, seq_len_q, seq_len_kv, d_model = 2, 5, 12, 64
+        q = torch.randn(batch_size, seq_len_q, d_model)
+        k = torch.randn(batch_size, seq_len_kv, d_model)
+        v = torch.randn(batch_size, seq_len_kv, d_model)
+
+        output, weights = mha_module(q, k, v)
+        assert output.shape == (batch_size, seq_len_q, d_model)
+        assert weights.shape == (batch_size, 4, seq_len_q, seq_len_kv)
+
+
