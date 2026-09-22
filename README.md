@@ -21,9 +21,8 @@ A rigorous, modular implementation of **Scaled Dot-Product Attention**, **Multi-
    - [Transformer Encoder Layer & Stack](#5-transformer-encoder-layer--stack)
 2. [Tensor Shape Contracts](#tensor-shape-contracts)
 3. [Project Directory Structure](#project-directory-structure)
-4. [Step-by-Step Implementation Roadmap](#step-by-step-implementation-roadmap)
-5. [Commit Message Standards](#commit-message-standards)
-6. [Testing & Verification](#testing--verification)
+4. [Commit Message Standards](#commit-message-standards)
+5. [Testing & Verification](#testing--verification)
 
 ---
 
@@ -79,13 +78,13 @@ $$\underbrace{(B, T, d_{model})}_{\text{Linear projection}} \longrightarrow (B, 
 
 Because self-attention is permutation-equivariant (it contains no inherent notion of sequence order), positional encodings are added to the input embeddings:
 
-$$PE_{(pos, 2i)} = \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right)$$
+$$\text{PE}_{(pos, 2i)} = \sin\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)$$
 
-$$PE_{(pos, 2i+1)} = \cos\left(\frac{pos}{10000^{2i/d_{model}}}\right)$$
+$$\text{PE}_{(pos, 2i+1)} = \cos\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)$$
 
-Where $pos \in [0, \dots, \text{seq\_len}-1]$ is the token position and $i \in [0, \dots, d_{model}/2 - 1]$ is the channel index.
+Where $pos \in [0, \dots, T - 1]$ is the token position ($T$ is the sequence length) and $i \in [0, \dots, d_{\text{model}}/2 - 1]$ is the channel index.
 
-**Key Property**: For any fixed offset $k$, $PE_{pos+k}$ can be represented as a linear function of $PE_{pos}$ via trigonometric angle addition formulas, facilitating the model in learning relative positional relationships.
+**Key Property**: For any fixed offset $k$, $\text{PE}_{pos+k}$ can be represented as a linear function of $\text{PE}_{pos}$ via trigonometric angle addition formulas, facilitating the model in learning relative positional relationships.
 
 ---
 
@@ -154,19 +153,20 @@ Attention/
 └── README.md                  # Complete mathematical & design documentation
 ```
 
+
 ---
 
 ## Commit Message Standards
 
 Every commit in this repository follows the structured format below so evaluators can inspect the exact architectural rationale and contract changes without reading diffs:
 
-```
+```text
 <type>(<scope>): <high-level imperative summary>
 
-Rationale & Mathematical Overview:
+Rationale & Architectural Overview:
 - Why this component was designed this way and what formulas govern it.
 
-Tensor Contract & Invariants:
+Tensor Contracts & Shapes:
 - Exact tensor inputs, shapes, transformations, and outputs.
 
 Verification:
@@ -177,7 +177,12 @@ Verification:
 
 ## Testing & Verification
 
-Run the test suite:
+Run the comprehensive unit test suite:
 ```bash
 pytest -v tests/
+```
+
+Run the architecture demonstration and diagnostics:
+```bash
+python demo.py
 ```
